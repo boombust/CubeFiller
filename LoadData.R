@@ -49,15 +49,14 @@ for (i in 1:nrow(TaxableIncome.csv)) {
   TaxableIncome.Deltas[i,c(4:7)] <- TaxableIncome.csv[i,c(4:7)]/state.total    
 }
 
-write.csv(TaxableIncome.Deltas,"TaxableIncomeDeltas.csv")
+# write.csv(TaxableIncome.Deltas,"TaxableIncomeDeltas.csv")
 
-save(TaxableIncome.State,TaxableIncome.Deltas,Unemployment.State,Unemployment.csv,MotorVehicles.Deltas,MotorVehicles.State,file="GeographicData.RData")
+# save(TaxableIncome.State,TaxableIncome.Deltas,Unemployment.State,Unemployment.csv,MotorVehicles.Deltas,MotorVehicles.State,file="GeographicData.RData")
 
 # ------------------------------------------------------------------------------
 #   load time series data
 # ------------------------------------------------------------------------------
 library(quantmod)
-library(plyr)
 
 NewVehicleSales.csv <- read.csv("../Data/New Vehicle Sales - State.csv")
 CPI.csv <- read.csv("../Data/CapitalCity CPI.csv")
@@ -108,17 +107,21 @@ colnames(Capex_National.xts) <- paste("Capex","National",colnames(Capex_National
 
 # ---
 # merge xts files and save as .RData
+Capex.xts <- merge(Capex_ACT.xts,Capex_National.xts,Capex_NSW.xts,Capex_NT.xts,Capex_Qld.xts,Capex_SA.xts,Capex_Tas.xts,Capex_Vic.xts,Capex_WA.xts)
+idx <- grep("Total",colnames(Capex.xts),value=FALSE)
 
-TS.data <- merge(NewVehicles.xts,CPI.xts,WagePriceIndex.xts,HousePrices.xts,Capex_ACT.xts,Capex_National.xts,Capex_NSW.xts,Capex_NT.xts,Capex_Qld.xts,Capex_SA.xts,Capex_Tas.xts,Capex_Vic.xts,Capex_WA.xts)
+TS.dat.quarterly <- merge(Capex.xts[,-idx],CPI.xts,WagePriceIndex.xts,HousePrices.xts)
 
-TS.National <- na.locf(merge(Capex_National.xts,HousePrices.xts[,8],WagePriceIndex.xts[,9],CPI.xts[,9],NewVehicles.xts[,1]))
+TS.data <- merge(NewVehicles.xts,TS.dat.quarterly["1995::"])
+
+TS.National <- na.approx(merge(NewVehicles.xts[,1],Capex_National.xts["1995::"],HousePrices.xts["1995::",8],WagePriceIndex.xts["1995::",9],CPI.xts["1995::",9],fill=NA))
 save(TS.National,file="TS_National.RData")
 
 
-TS.ACT <- na.locf(merge(Capex_ACT.xts,HousePrices.xts[,7],WagePriceIndex.xts[,8],CPI.xts[,8],NewVehicles.xts[,9]))
+TS.ACT <- na.approx(merge(NewVehicles.xts[,9],Capex_ACT.xts["1995::"],HousePrices.xts["1995::",7],WagePriceIndex.xts["1995::",8],CPI.xts["1995::",8]))
 save(TS.ACT,file="TS_ACT.RData")
 
-TS.WA <- na.locf(merge(Capex_WA.xts,HousePrices.xts[,4],WagePriceIndex.xts[,5],CPI.xts[,5],NewVehicles.xts[,6]))
+TS.WA <- na.approx(merge(NewVehicles.xts[,6],Capex_WA.xts["1995::"],HousePrices.xts[,4],WagePriceIndex.xts["1995::",5],CPI.xts["1995::",5]))
 save(TS.WA,file="TS_WA.RData")
 
 plot.zoo(TS.WA)

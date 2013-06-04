@@ -1,4 +1,58 @@
 
+# -------------------------------------------------------------------
+#  my TS kernels
+# -------------------------------------------------------------------
+
+kernel.SE <- function(x,y,sigma,l.sq,noise) {
+  X <- outer(x,y,FUN="-")^2
+  K <- sigma^2*exp(-0.5*X/l.sq^2)
+  if (nrow(K) <= ncol(K))
+    K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
+  if (nrow(K) > ncol(K))
+    K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
+  return(K)
+}
+
+kernel.SE.Periodic <- function(x,y,sigma,l.sq,noise) {
+  X <- outer(x,y,FUN="-")^2
+  K <- sigma^2*exp(-0.5*X/l.sq[1]^2 - 2*sin(pi*X^2)^2/l.sq[2]) 
+  if (nrow(K) <= ncol(K))
+    K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
+  if (nrow(K) > ncol(K))
+    K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
+  return(K)
+  
+}
+
+kernel.RQ <- function(x,y,sigma,theta,l.sq,noise) {
+  X <- outer(x,y,FUN="-")^2
+  K <- sigma^2*(1 + X/(2*theta*l.sq^2))^(-theta)
+  if (nrow(K) <= ncol(K))
+    K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
+  if (nrow(K) > ncol(K))
+    K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
+  return(K)
+}
+
+kernel.complex.TS <- function(x,y,pars) {
+  sigma = pars[1]
+  l.sq = pars[2]
+  K <- kernel.SE(x,y,sigma,l.sq,noise=0)
+  sigma <- pars[3]
+  l.sq <- pars[4:5]
+  K <- K + kernel.SE.Periodic(x,y,sigma,l.sq,noise=0)
+  sigma <- pars[6]
+  theta <- pars[7]
+  l.sq <- pars[8]
+  K <- K + kernel.RQ(x,y,sigma,theta,l.sq,noise=0)
+  noise = pars[length(pars)]
+  if (nrow(K) <= ncol(K))
+    K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
+  if (nrow(K) > ncol(K))
+    K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
+  return(K)
+}
+
 kernel.SE.ARGPTS <- function(x,y,sigma,l.sq,noise) {
   nx <- dim(x)[1]
   tx <- c(0:(nx-1))/l.sq[1]
@@ -34,6 +88,9 @@ kernel.SE.ARGPTS.pred <- function(x,y,sigma,l.sq) {
   return(K)
 }
 
+# -------------------------------------------------------------------
+#  log likelihood fitting of parameters
+# -------------------------------------------------------------------
 
 NLL <- function(K,y) {
   stopifnot(is.matrix(K))
@@ -46,6 +103,51 @@ NLL <- function(K,y) {
   #    cat(-1*logP,"|",length(idx),"\n")
   return(-1*logP)
 }
+
+# -------------------------------------------------------------------
+#   fitting the hyper-parameters
+# -------------------------------------------------------------------
+fn.SE.TS <- function(pars,yy,osu=FALSE) {
+  sigma = pars[1]
+  l.sq = pars[2]
+  noise = pars[3]
+  tt = c(0:(length(yy)-1))
+  K <- kernel.SE(x=tt,y=tt,sigma,l.sq,noise)
+  if (osu) { nll <- NLL.OSU(K,yy) }
+  else {nll <- NLL(K,yy)}
+  #   cat(nll,pars,"\n")
+  return(nll)
+}
+
+
+fit.SE.TS <- function(y,par0=c(1,5,1),lb=c(0.1,1,0.1),ub=c(3,20,1),scale=TRUE,OSU=FALSE) {
+  if (is.xts(y)) y <- coredata(y)
+  if (scale) y <- scale(y)
+  pars = par0
+  ctrl <- list(trace=1)
+  min.nll <- nlminb(pars,fn.SE.TS,gr=NULL,hessian=NULL,y,OSU,control=ctrl,lower=lb,upper=ub)  
+  return(min.nll)
+}
+
+fn.complex.TS <- function(pars,yy,osu=FALSE) {
+  tt <- c(0:(length(yy)-1))
+  K <- kernel.complex.TS(x=tt,y=tt,pars)
+  if (osu) { nll <- NLL.OSU(K,yy) }
+  else {nll <- NLL(K,yy)}
+  #   cat(nll,pars,"\n")
+  return(nll)
+}
+
+
+fit.complex.TS <- function(y,par0=c(1,5,1,5,5,1,0.5,5,1),lb=0.1*par0,ub=5*par0,scale=TRUE,OSU=FALSE) {
+  if (is.xts(y)) y <- coredata(y)
+  if (scale) y <- scale(y)
+  pars = par0
+  ctrl <- list(trace=1)
+  min.nll <- nlminb(pars,fn.complex.TS,gr=NULL,hessian=NULL,y,OSU,control=ctrl,lower=lb,upper=ub)  
+  return(min.nll)
+}
+
 
 fn.SE.ARGPTS <- function(pars,dat,osu) {
   n <- ncol(dat)
@@ -76,6 +178,9 @@ fit.SE.ARGPTS <- function(x,y,par0=c(1,0.5,3,3,3,.1),lb=0.1*par0,ub=5*par0,scale
   return(min.nll)
 }
 
+# -------------------------------------------------------------------
+#  gaussian process fitting and prediction
+# -------------------------------------------------------------------
 
 
 gausspr.ARGPTS <- function(x,y,kpar,scale=TRUE) {
@@ -112,6 +217,103 @@ predict.ARGPTS <- function(gfit,newdata,variance=FALSE) {
     mu.star <- t(K.star) %*% gfit$beta
     if (variance) {
       K.star.star <- kernel.SE.ARGPTS.pred(x=newdata,y=newdata,sigma,l.sq)
+      sigma.star <- diag(K.star.star - t(K.star) %*% gfit$K.inv %*% K.star)
+    }
+  }
+  # rescale the predictions to match original y data
+  if (gfit$scale) {
+    mu.star <- mu.star*attr(gfit$y,"scaled:scale") + attr(gfit$y,"scaled:center")
+    if (variance) sigma.star <- sigma.star * attr(gfit$y,"scaled:scale")^2
+  }
+  return(list("mean"=mu.star,"var"=sigma.star))
+}
+
+# ----
+
+gausspr.SE <- function(x,y,kpar,scale=TRUE) {
+  # solve gpts on data y = f(x)
+  stopifnot(length(x)==length(y))
+  if (scale) y <- scale(y)
+  n <- length(y)
+  K <- kernel.SE(x,x,sigma=kpar[1],l.sq=kpar[2],noise=kpar[3])
+  K.inv <- solve(K)
+  beta <- K.inv %*% y
+  return(list("K.inv"=K.inv,"beta"=beta,"kpar"=kpar,"y"=y,"scale"=scale))
+}
+
+gausspr.SE.TS <- function(y,kpar,scale=TRUE) {
+  # solve gpts on data y = f(t)
+  x.t <- c(0:(length(y)-1))
+  gausspr.SE(x.t,y,kpar,scale)
+}
+
+
+predict.SE.TS <- function(gfit,newdata,variance=FALSE) {
+  # re-use kernel parameters 
+  sigma = gfit$kpar[1]
+  l.sq = gfit$kpar[2]
+  noise = gfit$kpar[3]
+  n = length(gfit$y)
+  sigma.star <- NULL
+  # if no newdata, return evaluation on fitted data
+  tt <- c(0:(n-1))
+  if (missing(newdata)) {
+    K <- kernel.SE(x=tt,y=tt,sigma=sigma,l.sq=l.sq,noise=0)
+    mu.star <- K %*% gfit$beta  
+    if (variance) sigma.star <- rep(sigma^2+noise^2,n)
+  } else {
+    K.star <- kernel.SE(x=tt,y=newdata,sigma=sigma,l.sq=l.sq,noise=0)
+    mu.star <- t(K.star) %*% gfit$beta
+    if (variance) {
+      K.star.star <- kernel.SE(x=newdata,y=newdata,sigma=sigma,l.sq=l.sq,noise=0)
+      sigma.star <- diag(K.star.star - t(K.star) %*% gfit$K.inv %*% K.star)
+    }
+  }
+  # rescale the predictions to match original y data
+  if (gfit$scale) {
+    mu.star <- mu.star*attr(gfit$y,"scaled:scale") + attr(gfit$y,"scaled:center")
+    if (variance) sigma.star <- sigma.star * attr(gfit$y,"scaled:scale")^2
+  }
+  return(list("mean"=mu.star,"var"=sigma.star))
+}
+
+
+# ----
+
+gausspr.complex <- function(x,y,kpar,scale=TRUE) {
+  # solve gpts on data y = f(x)
+  stopifnot(length(x)==length(y))
+  if (scale) y <- scale(y)
+  n <- length(y)
+  K <- kernel.complex.TS(x,x,kpar)
+  K.inv <- solve(K)
+  beta <- K.inv %*% y
+  return(list("K.inv"=K.inv,"beta"=beta,"kpar"=kpar,"y"=y,"x"=x,"scale"=scale))
+}
+
+gausspr.complex.TS <- function(y,kpar,scale=TRUE) {
+  # solve gpts on data y = f(t)
+  x.t <- c(0:(length(y)-1))
+  gausspr.complex(x.t,y,kpar,scale)
+}
+
+
+predict.complex.TS <- function(gfit,newdata,variance=FALSE) {
+  # re-use kernel parameters 
+  pars <- gfit$kpar
+  # if no newdata, return evaluation on fitted data
+  n <- length(gfit$x)
+  tt <- c(0:(n-1))
+  if (missing(newdata)) {
+    K <- kernel.complex.TS(x=tt,y=tt,pars)
+    mu.star <- K %*% gfit$beta  
+    if (variance) sigma.star <- rep(sum(pars[c(1,3,6,9)]^2),n)
+  } else {
+    # don't need to rescale newdata for a timeseries only model
+    K.star <- kernel.complex.TS(x=tt,y=newdata,pars)
+    mu.star <- t(K.star) %*% gfit$beta
+    if (variance) {
+      K.star.star <- kernel.complex.TS(x=newdata,y=newdata,pars)
       sigma.star <- diag(K.star.star - t(K.star) %*% gfit$K.inv %*% K.star)
     }
   }

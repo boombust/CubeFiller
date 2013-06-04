@@ -8,7 +8,6 @@ library(softImpute)
 load("GeographicData.RData")
 load("TS_National.RData")
 load("TS_WA.RData")
- 
 
 # ------------------------------------------------------------------------------
 #   Make BBI
@@ -73,3 +72,37 @@ xna <- as(coredata(Motor.WA),"Incomplete")
 fit2 <- softImpute(xna,rank=100,lambda=30)
 Motor.WA.imputed <- fit2$u %*% diag(fit2$d) %*% t(fit2$v)
 head(Motor.WA.imputed[,1:10],20)
+
+# ------------------------------------------------------------------------------
+#  model national quantities
+# ------------------------------------------------------------------------------
+
+X <- TS.National["2004::2010",1]
+
+par.names <- c("sigma","l.sq","sigma","l.sq","l.sq","sigma","theta","l.sq","noise")
+
+par1 <- matrix(c(2,7,1,7,7,2,0.5,7,1),nrow=1)
+colnames(par1) <- par.names
+par.min <- matrix(c(0.1,1,0.1,1,1,0.1,1,1,0.1),nrow=1)
+colnames(par.min) <- par.names
+par.max <- matrix(c(10,50,10,50,50,10,10,50,5),nrow=1)
+colnames(par.max) <- par.names
+rbind(par1,par.min,par.max)
+
+a0 <- fit.complex.TS(coredata(X),par0=par1,lb=par.min,ub=par.max,scale=TRUE,OSU=FALSE)
+par.fit <- matrix(a0$par,nrow=1)
+colnames(par.fit) <- par.names
+
+gp.vehicles <- gausspr.complex.TS(y=coredata(X),kpar=par.fit,scale=TRUE)
+vehic.fit <- predict.complex.TS(gp.vehicles,variance=TRUE)
+vehic.xts <- xts(vehic.fit$mean,index(X))
+vehic.var <- cbind(vehic.xts + sqrt(vehic.fit$var),vehic.xts - sqrt(vehic.fit$var))
+plot(X)
+lines(vehic.xts,col=4)
+lines(vehic.var[,1],col=3)
+lines(vehic.var[,2],col=3)
+
+vehic.ahead <- predict.complex.TS(gp.vehicles,newdata=c(nrow(X):(nrow(X)+28-1)),variance=TRUE)
+vehic.pred.xts <- xts(vehic.ahead$mean,index(TS.National["2011::"]))
+plot.xts(TS.National["2009::",1],main="New Vehicle Sales Nationally")
+lines(vehic.pred.xts,col=4)
