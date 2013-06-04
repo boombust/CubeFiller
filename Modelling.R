@@ -8,6 +8,7 @@ library(softImpute)
 load("GeographicData.RData")
 load("TS_National.RData")
 load("TS_WA.RData")
+ 
 
 # ------------------------------------------------------------------------------
 #   Make BBI
