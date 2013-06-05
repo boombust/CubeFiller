@@ -13,20 +13,34 @@ kernel.SE <- function(x,y,sigma,l.sq,noise) {
   return(K)
 }
 
-kernel.SE.Periodic <- function(x,y,sigma,l.sq,noise) {
+kernel.Periodic.Approx <- function(x,y,sigma,l.sq,omega,theta,noise) {
   X <- outer(x,y,FUN="-")^2
-  K <- sigma^2*exp(-0.5*X/l.sq[1]^2 - 2*sin(pi*X^2)^2/l.sq[2]) 
+  K <- sigma^2*exp(-0.5*X/l.sq^2 - 2*sin(pi*omega*X)^2/theta^2)
+#   K <- sigma^2*exp(-0.5*X/l.sq^2 - 2*sin(pi*X)^2/omega^2)
   if (nrow(K) <= ncol(K))
     K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
   if (nrow(K) > ncol(K))
     K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
   return(K)
-  
 }
+
+kernel.Periodic <- function(x,y,sigma,omega,theta,noise) {
+  X <- outer(x,y,FUN="-")^2
+  K <- sigma^2*exp(-2*sin(pi*omega*X)^2/theta^2)
+  #   K <- sigma^2*exp(-0.5*X/l.sq^2 - 2*sin(pi*X)^2/omega^2)
+  if (nrow(K) <= ncol(K))
+    K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
+  if (nrow(K) > ncol(K))
+    K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
+  return(K)
+}
+
 
 kernel.RQ <- function(x,y,sigma,theta,l.sq,noise) {
   X <- outer(x,y,FUN="-")^2
-  K <- sigma^2*(1 + X/(2*theta*l.sq^2))^(-theta)
+#   K <- sigma^2*(1 + X/(2*theta*l.sq^2))^(-theta)
+  logK <- 2*log(sigma) - theta*log(1 + X/(2*theta*l.sq^2))   # more stable??
+  K <- exp(logK)
   if (nrow(K) <= ncol(K))
     K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
   if (nrow(K) > ncol(K))
@@ -35,16 +49,18 @@ kernel.RQ <- function(x,y,sigma,theta,l.sq,noise) {
 }
 
 kernel.complex.TS <- function(x,y,pars) {
-  sigma = pars[1]
-  l.sq = pars[2]
+  sigma <- pars[1]
+  l.sq <- pars[2]
   K <- kernel.SE(x,y,sigma,l.sq,noise=0)
   sigma <- pars[3]
-  l.sq <- pars[4:5]
-  K <- K + kernel.SE.Periodic(x,y,sigma,l.sq,noise=0)
+  omega <- pars[4]
+  theta <- pars[5]
+  K1 <- kernel.Periodic(x,y,sigma,omega,theta=1,noise=0)
   sigma <- pars[6]
-  theta <- pars[7]
-  l.sq <- pars[8]
-  K <- K + kernel.RQ(x,y,sigma,theta,l.sq,noise=0)
+  omega <- pars[7]
+  theta <- pars[8]
+  K2 <- kernel.Periodic(x,y,sigma,omega,theta=1,noise=0)
+  K <- K + K1*K2
   noise = pars[length(pars)]
   if (nrow(K) <= ncol(K))
     K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
@@ -52,6 +68,24 @@ kernel.complex.TS <- function(x,y,pars) {
     K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
   return(K)
 }
+
+kernel.complex.TS.2 <- function(x,y,pars) {
+  sigma <- pars[1]
+  l.sq <- pars[2]
+  K <- kernel.SE(x,y,sigma,l.sq,noise=0)
+  sigma <- pars[3]
+  l.sq <- pars[4]
+  omega <- pars[5]
+  theta <- pars[6]
+  K <- K + kernel.Periodic.Approx(x,y,sigma,l.sq,omega,theta=1,noise=0)
+  noise = pars[length(pars)]
+  if (nrow(K) <= ncol(K))
+    K <- K + cbind(diag(noise^2,nrow(K)),matrix(0,nrow=nrow(K),ncol=ncol(K)-nrow(K)))
+  if (nrow(K) > ncol(K))
+    K <- K + rbind(diag(noise^2,ncol(K)),matrix(0,nrow=nrow(K)-ncol(K),ncol=ncol(K)))
+  return(K)
+}
+
 
 kernel.SE.ARGPTS <- function(x,y,sigma,l.sq,noise) {
   nx <- dim(x)[1]
@@ -134,17 +168,24 @@ fn.complex.TS <- function(pars,yy,osu=FALSE) {
   K <- kernel.complex.TS(x=tt,y=tt,pars)
   if (osu) { nll <- NLL.OSU(K,yy) }
   else {nll <- NLL(K,yy)}
-  #   cat(nll,pars,"\n")
+  return(nll)
+}
+
+fn.complex.TS.2 <- function(pars,yy,osu=FALSE) {
+  tt <- c(0:(length(yy)-1))
+  K <- kernel.complex.TS.2(x=tt,y=tt,pars)
+  if (osu) { nll <- NLL.OSU(K,yy) }
+  else {nll <- NLL(K,yy)}
   return(nll)
 }
 
 
-fit.complex.TS <- function(y,par0=c(1,5,1,5,5,1,0.5,5,1),lb=0.1*par0,ub=5*par0,scale=TRUE,OSU=FALSE) {
+fit.gpts <- function(y,fn=fn.complex.TS,par0=rep(1,length(y)),lb=0.1*par0,ub=5*par0,scale=TRUE,OSU=FALSE) {
   if (is.xts(y)) y <- coredata(y)
   if (scale) y <- scale(y)
   pars = par0
   ctrl <- list(trace=1)
-  min.nll <- nlminb(pars,fn.complex.TS,gr=NULL,hessian=NULL,y,OSU,control=ctrl,lower=lb,upper=ub)  
+  min.nll <- nlminb(pars,fn,gr=NULL,hessian=NULL,y,OSU,control=ctrl,lower=lb,upper=ub)  
   return(min.nll)
 }
 
@@ -209,8 +250,7 @@ predict.ARGPTS <- function(gfit,newdata,variance=FALSE) {
   if (missing(newdata)) {
     K <- kernel.SE.ARGPTS(gfit$x,gfit$x,sigma,l.sq,noise=0)
     mu.star <- K %*% gfit$beta  
-    #     if (variance) sigma.star <- rep(sigma^2+noise^2,n)
-    if (variance) sigma.star <- rep(sigma^2,n)
+    if (variance) sigma.star <- sigma^2+noise^2
   } else {
     if(gfit$scale) newdata <- (newdata - attr(gfit$y,"scaled:center"))*attr(gfit$y,"scaled:scale")
     K.star <- kernel.SE.ARGPTS.pred(gfit$x,y=newdata,sigma,l.sq)
@@ -280,40 +320,41 @@ predict.SE.TS <- function(gfit,newdata,variance=FALSE) {
 
 # ----
 
-gausspr.complex <- function(x,y,kpar,scale=TRUE) {
+gausspr.complex <- function(kernel=kernel.complex.TS,x,y,kpar,scale=TRUE) {
   # solve gpts on data y = f(x)
   stopifnot(length(x)==length(y))
   if (scale) y <- scale(y)
   n <- length(y)
-  K <- kernel.complex.TS(x,x,kpar)
+  K <- kernel(x,x,kpar)
   K.inv <- solve(K)
   beta <- K.inv %*% y
-  return(list("K.inv"=K.inv,"beta"=beta,"kpar"=kpar,"y"=y,"x"=x,"scale"=scale))
+  return(list("K.inv"=K.inv,"beta"=beta,"kpar"=kpar,"y"=y,"x"=x,"scale"=scale,"kernel"=kernel))
 }
 
-gausspr.complex.TS <- function(y,kpar,scale=TRUE) {
+gausspr.complex.TS <- function(kernel=kernel.complex.TS,y,kpar,scale=TRUE) {
   # solve gpts on data y = f(t)
   x.t <- c(0:(length(y)-1))
-  gausspr.complex(x.t,y,kpar,scale)
+  gausspr.complex(kernel,x.t,y,kpar,scale)
 }
 
 
 predict.complex.TS <- function(gfit,newdata,variance=FALSE) {
   # re-use kernel parameters 
   pars <- gfit$kpar
-  # if no newdata, return evaluation on fitted data
   n <- length(gfit$x)
   tt <- c(0:(n-1))
+  sigma.star <- NULL
   if (missing(newdata)) {
-    K <- kernel.complex.TS(x=tt,y=tt,pars)
+    # if no newdata, return evaluation on fitted data
+    K <- gfit$kernel(x=tt,y=tt,pars)
     mu.star <- K %*% gfit$beta  
-    if (variance) sigma.star <- rep(sum(pars[c(1,3,6,9)]^2),n)
+    if (variance) sigma.star <- rep(sum(pars[c(1,3,6,9)]),n)
   } else {
     # don't need to rescale newdata for a timeseries only model
-    K.star <- kernel.complex.TS(x=tt,y=newdata,pars)
+    K.star <- gfit$kernel(x=tt,y=newdata,pars)
     mu.star <- t(K.star) %*% gfit$beta
     if (variance) {
-      K.star.star <- kernel.complex.TS(x=newdata,y=newdata,pars)
+      K.star.star <- gfit$kernel(x=newdata,y=newdata,pars)
       sigma.star <- diag(K.star.star - t(K.star) %*% gfit$K.inv %*% K.star)
     }
   }
